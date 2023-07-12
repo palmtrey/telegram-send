@@ -82,7 +82,7 @@ telegram-send --sticker sticker.webp
 
 To send a GIF or a soundless MP4 video (encoded as H.264/MPEG-4 AVC with a maximum file size of 50 MB) with an optional caption:
 ``` shell
-telegram-send --animation kitty.gif --caption "🐱"
+telegram-send --animation kitty.gif --caption ""
 ```
 
 To send an MP4 video (maximum file size of 50 MB) with an optional caption:

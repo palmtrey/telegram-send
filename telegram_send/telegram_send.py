@@ -27,10 +27,11 @@ from shutil import which
 from typing import NamedTuple, Union
 from subprocess import check_output
 from warnings import warn
+import asyncio
 
 import colorama
 import telegram
-from telegram.constants import MAX_MESSAGE_LENGTH
+from telegram.constants import MessageLimit
 
 from .version import __version__
 from .utils import pre_format, split_message, get_config_path, markup
@@ -44,7 +45,10 @@ except ImportError:
 global_config = "/etc/telegram-send.conf"
 
 
-def main():
+def entry():
+    asyncio.run(main())
+
+async def main():
     colorama.init()
     parser = argparse.ArgumentParser(description="Send messages and files over Telegram.",
                                      epilog="Homepage: https://github.com/rahiel/telegram-send")
@@ -94,11 +98,11 @@ def main():
         conf = args.conf
 
     if args.configure:
-        return configure(conf[0], fm_integration=True)
+        return await configure(conf[0], fm_integration=True)
     elif args.configure_channel:
-        return configure(conf[0], channel=True)
+        return await configure(conf[0], channel=True)
     elif args.configure_group:
-        return configure(conf[0], group=True)
+        return await configure(conf[0], group=True)
     elif args.file_manager:
         if not sys.platform.startswith("win32"):
             return integrate_file_manager()
@@ -217,7 +221,8 @@ def send(*,
     kwargs = {
         "chat_id": chat_id,
         "disable_notification": silent,
-        "timeout": timeout,
+        "read_timeout": timeout,
+        "write_timeout": timeout
     }
 
     if messages:
@@ -233,17 +238,17 @@ def send(*,
             )
 
         for m in messages:
-            if len(m) > MAX_MESSAGE_LENGTH:
+            if len(m) > MessageLimit.MAX_TEXT_LENGTH:
                 warn(markup(
-                    f"Message longer than MAX_MESSAGE_LENGTH={MAX_MESSAGE_LENGTH}, splitting into smaller messages.",
+                    f"Message longer than MAX_MESSAGE_LENGTH={MessageLimit.MAX_TEXT_LENGTH}, splitting into smaller messages.",
                     "red"))
-                ms = split_message(m, MAX_MESSAGE_LENGTH)
+                ms = split_message(m, MessageLimit.MAX_TEXT_LENGTH)
                 for m in ms:
                     message_ids += [send_message(m, parse_mode)["message_id"]]
             elif len(m) == 0:
                 continue
             else:
-                message_ids += [send_message(m, parse_mode)["message_id"]]
+                message_ids += [asyncio.run(send_message(m, parse_mode))["message_id"]]
 
     def make_captions(items, captions):
         # make captions equal length when not all images/files have captions
@@ -339,7 +344,7 @@ def delete(message_ids, conf=None, timeout=30):
                 warn(markup(f"Deleting message with id={m} failed: {e}", "red"))
 
 
-def configure(conf, channel=False, group=False, fm_integration=False):
+async def configure(conf, channel=False, group=False, fm_integration=False):
     """Guide user to set up the bot, saves configuration at `conf`.
 
     # Arguments
@@ -365,10 +370,12 @@ def configure(conf, channel=False, group=False, fm_integration=False):
 
     try:
         bot = telegram.Bot(token)
-        bot_name = bot.get_me().username
-    except Exception:
+        b = await bot.get_me()
+        bot_name = b.username
+    except Exception as e:
         print(markup("Something went wrong, please try again.\n", "red"))
-        return configure(conf, channel=channel, group=group, fm_integration=fm_integration)
+        print(e)
+        return await configure(conf, channel=channel, group=group, fm_integration=fm_integration)
 
     print("Connected with {}.\n".format(markup(bot_name, "cyan")))
 
@@ -418,8 +425,8 @@ def configure(conf, channel=False, group=False, fm_integration=False):
 
         update, update_id = None, None
 
-        def get_user():
-            updates = bot.get_updates(offset=update_id, timeout=10)
+        async def get_user():
+            updates = await bot.get_updates(offset=update_id, timeout=10)
             for update in updates:
                 if update.message:
                     if update.message.text == password:
@@ -431,7 +438,7 @@ def configure(conf, channel=False, group=False, fm_integration=False):
 
         while update is None:
             try:
-                update, update_id = get_user()
+                update, update_id = await get_user()
             except Exception as e:
                 print("Error! {}".format(e))
 
@@ -440,7 +447,7 @@ def configure(conf, channel=False, group=False, fm_integration=False):
         m = ("Congratulations {}! ".format(user), "\ntelegram-send is now ready for use!")
         ball = "🎊"
         print(markup("".join(m), "green"))
-        bot.send_message(chat_id=chat_id, text=ball + " " + m[0] + ball + m[1])
+        await bot.send_message(chat_id=chat_id, text=ball + " " + m[0] + ball + m[1])
 
     config = configparser.ConfigParser()
     config["telegram"] = {"TOKEN": token, "chat_id": chat_id}
@@ -530,7 +537,3 @@ def get_config_settings(conf=None) -> Settings:
     if chat_id.isdigit():
         chat_id = int(chat_id)
     return Settings(token=token, chat_id=chat_id)
-
-
-if __name__ == "__main__":
-    main()
